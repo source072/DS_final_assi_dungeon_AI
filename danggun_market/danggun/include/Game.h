@@ -21,6 +21,8 @@ private:
     int               currentStage;    // 0~4 (0 = 아직 시작 전)
     int               minBet;          // 카지노 최소 베팅
     bool              stageCleared[4]; // 각 스테이지 클리어 여부
+    int               enemyCount;      // 처치한 진상 수
+    int               laborCount;      // 상하차 횟수
     Jinsang           jinsangs[4];     // 진상 4명
 
     // 방 ID 상수
@@ -45,8 +47,9 @@ private:
     void doStatus()     const;
     void doInventory()  const;
     void doMap()        const;
-    void doScores()     const;
     void doSortItems()  const;
+    void doSell(const std::string& itemName);
+    void triggerRandomEvent();
 
     // 전투 내부 헬퍼
     int  calcInitialProb(int jinsangPower) const;
@@ -54,6 +57,11 @@ private:
 
     // 카지노 내부 헬퍼
     void runSlotMachine();
+
+    // 상점 NPC 멘트
+    void printShopGreeting()              const;
+    void printShopPurchaseMsg(int price)  const;
+    void printShopNoMoneyMsg()            const;
 
     // 스테이지 해금 체크
     bool canUnlockStage(int stage) const;

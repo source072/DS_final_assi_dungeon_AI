@@ -27,6 +27,7 @@ public:
     Item*        findItem(const std::string& itemName);
     const Item*  findItem(const std::string& itemName) const;
     bool         hasItemOfType(ItemType type) const;
+    int          countItemsOfType(ItemType type) const;
     bool         isEmpty() const;
     int          size()    const;
     void         clear();

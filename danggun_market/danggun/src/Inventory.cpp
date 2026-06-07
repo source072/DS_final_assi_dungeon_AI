@@ -63,6 +63,16 @@ bool Inventory::hasItemOfType(ItemType type) const {
     return false;
 }
 
+int Inventory::countItemsOfType(ItemType type) const {
+    int total = 0;
+    Node* current = head;
+    while (current != nullptr) {
+        if (current->item.getType() == type) ++total;
+        current = current->next;
+    }
+    return total;
+}
+
 bool Inventory::isEmpty() const { return count == 0; }
 int  Inventory::size()    const { return count; }
 

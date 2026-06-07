@@ -11,7 +11,8 @@
 Game::Game()
     : dungeon(), player("백춘식"),
       moveHistory(), eventQueue(), scoreTree(),
-      running(true), currentStage(0), minBet(1000) {
+      running(true), currentStage(0), minBet(1000),
+      enemyCount(0), laborCount(0) {
     for (int i = 0; i < 4; ++i) stageCleared[i] = false;
     std::srand(static_cast<unsigned>(std::time(nullptr)));
     buildWorld();
@@ -40,19 +41,20 @@ void Game::buildWorld() {
         "번쩍번쩍한 슬롯머신들. 여기서 한 방을 노릴 수 있다.\n"
         "단, 잃을 수도 있다는 걸 명심할 것.");
 
-    roomShop       = dungeon.addRoom("🏪 상점",
-        "무기, 음식, 펫, 상품을 판매한다.\n"
-        "'buy <아이템명>'으로 구매할 수 있다.");
+    roomShop       = dungeon.addRoom("🏪 시세조작은아님상점",
+        "합법입니다. 아마도...?\n\n"
+        "수상한 상인이 당신을 바라보고 있다.\n"
+        "'buy <아이템명>'으로 구매, 'look'으로 목록 확인.");
 
     roomJail       = dungeon.addRoom("🔒 감옥",
         "...돈을 다 잃었다. 게임 오버.");
 
-    // 연결: 집을 허브로
-    dungeon.connectRooms(roomHome, Direction::North, roomMeeting[0], false);
-    dungeon.connectRooms(roomMeeting[0], Direction::South, roomHome, false);
+    // 연결: 집을 허브로 (북: 카지노, 남: 약속 장소, 동: 상점)
+    dungeon.connectRooms(roomHome, Direction::South, roomMeeting[0], false);
+    dungeon.connectRooms(roomMeeting[0], Direction::North, roomHome, false);
 
-    dungeon.connectRooms(roomHome, Direction::East,  roomCasino, true);
-    dungeon.connectRooms(roomHome, Direction::West,  roomShop,   true);
+    dungeon.connectRooms(roomHome, Direction::North, roomCasino, true);
+    dungeon.connectRooms(roomHome, Direction::East,  roomShop,   true);
 
     // 약속 장소들은 집에서만 접근
     // (Stage 해금 시 연결 추가)
@@ -74,10 +76,7 @@ void Game::buildWorld() {
         shop->addItem(Item("빌딩",      "리셀용 빌딩. 물건 자랑 가능.",        500000, 30, ItemType::Goods));
     }
 
-    // 초기 이벤트 큐
-    eventQueue.enqueue(GameEvent("이웃집 할머니가 용돈을 주셨다.", 0, 5000));
-    eventQueue.enqueue(GameEvent("길에서 천원을 주웠다!", 0, 1000));
-    eventQueue.enqueue(GameEvent("갑자기 택배비가 나갔다...", 0, -3000));
+    // 이벤트는 이동 시 랜덤 발생 (triggerRandomEvent 참조)
 }
 
 // ─────────────────────────────────────────
@@ -125,12 +124,12 @@ int Game::calcInitialProb(int jinsangPower) const {
 bool Game::battleTurn(int& prob, const Jinsang& jinsang) {
     std::cout << "\n현재 거래 확률: " << prob << "%\n";
     std::cout << "행동을 선택하세요:\n";
-    std::cout << "  1. 😤 설득하기       (확률 +10%)\n";
-    std::cout << "  2. 💰 가격 할인      (보유 금액 10% 소모, 확률 +20%)\n";
-    std::cout << "  3. 📸 물건 자랑      (상품 필요, 확률 +15%)\n";
-    std::cout << "  4. 🐾 펫 등장        (펫 필요, 1회만, 확률 +25%)\n";
-    std::cout << "  5. 🍔 음식 대접      (음식 소모, 확률 상승)\n";
-    std::cout << "  6. 🤝 거래 시도      (현재 확률로 판정)\n";
+    std::cout << "  1. 설득하기       (확률 +10%)\n";
+    std::cout << "  2. 가격 할인      (보유 금액 10% 소모, 확률 +20%)\n";
+    std::cout << "  3. 물건 자랑      (상품 필요, 확률 +15%)\n";
+    std::cout << "  4. 펫 등장        (펫 필요, 1회만, 확률 +25%)\n";
+    std::cout << "  5. 음식 대접      (음식 소모, 확률 상승)\n";
+    std::cout << "  6. 거래 시도      (현재 확률로 판정)\n";
 
     std::string input;
     std::cout << "> ";
@@ -263,22 +262,21 @@ void Game::doBattle(int stageIndex) {
 
     // 거래 판정
     if (prob <= 0) {
-        std::cout << "\n❌ 거래 실패! 다음에 다시 도전하자.\n";
+        std::cout << "\n거래 실패! 다음에 다시 도전하자.\n";
         return;
     }
     if (prob >= 100) {
-        std::cout << "\n✅ 확률 " << prob << "%! 거래 성공!\n";
+        std::cout << "\n거래 성공!\n";
         onStageClear(stageIndex);
         return;
     }
 
     int roll = std::rand() % 100 + 1;
-    std::cout << "\n🎲 주사위: " << roll << " (필요: " << prob << " 이하)\n";
     if (roll <= prob) {
-        std::cout << "✅ 거래 성공!\n";
+        std::cout << "\n거래 성공!\n";
         onStageClear(stageIndex);
     } else {
-        std::cout << "❌ 거래 실패! 다음에 다시 도전하자.\n";
+        std::cout << "\n거래 실패! 다음에 다시 도전하자.\n";
     }
 }
 
@@ -290,9 +288,9 @@ bool Game::canUnlockStage(int stage) const {
         case 0: // Stage 1: 돈 30,000원 + 상품 1개
             return player.getMoney() >= 30000
                 && player.getInventory().hasItemOfType(ItemType::Goods);
-        case 1: // Stage 2: 돈 100,000원 + 상품 보유
+        case 1: // Stage 2: 돈 100,000원 + 상품 2개
             return player.getMoney() >= 100000
-                && player.getInventory().hasItemOfType(ItemType::Goods);
+                && player.getInventory().countItemsOfType(ItemType::Goods) >= 2;
         case 2: // Stage 3: 돈 300,000원 + 무기
             return player.getMoney() >= 300000
                 && player.getInventory().hasItemOfType(ItemType::Weapon);
@@ -307,6 +305,7 @@ bool Game::canUnlockStage(int stage) const {
 void Game::onStageClear(int stageIndex) {
     stageCleared[stageIndex] = true;
     currentStage = stageIndex + 1;
+    ++enemyCount;
 
     // 카지노 최소 베팅 상승
     int bets[] = { 1000, 5000, 15000, 50000 };
@@ -314,35 +313,48 @@ void Game::onStageClear(int stageIndex) {
 
     // 약속 장소 다음 스테이지 연결
     if (currentStage < 4) {
-        dungeon.connectRooms(roomHome, Direction::North, roomMeeting[currentStage], false);
-        dungeon.connectRooms(roomMeeting[currentStage], Direction::South, roomHome, false);
+        dungeon.connectRooms(roomHome, Direction::South, roomMeeting[currentStage], false);
+        dungeon.connectRooms(roomMeeting[currentStage], Direction::North, roomHome, false);
     }
 
     // 보상
     int rewards[] = { 20000, 60000, 150000, 500000 };
     int reward = rewards[stageIndex];
     player.addMoney(reward);
-    std::cout << "\n🎉 Stage " << (stageIndex + 1) << " 클리어! 보상: "
+    std::cout << "\nStage " << (stageIndex + 1) << " 클리어! 보상: "
               << reward << "원\n";
 
     // 최종 클리어
     if (stageIndex == 3) {
         std::cout << "\n";
-        std::cout << "══════════════════════════════════════\n";
-        std::cout << "           🏆 GAME CLEAR 🏆            \n";
-        std::cout << "══════════════════════════════════════\n";
-        std::cout << "\n백춘식은 해냈다.\n";
-        std::cout << "진상들을 모두 물리치고,\n";
-        std::cout << "카지노에서 쪽박을 찰 뻔 했으면서도,\n";
-        std::cout << "당근마켓에서 떼돈을 벌었다.\n\n";
+        std::cout << "──────────────────────────────────────\n";
+        std::cout << "           🏆 GAME CLEAR 🏆\n";
+        std::cout << "──────────────────────────────────────\n";
+        std::cout << "\n[잔잔한 BGM이 흐르다가... 갑자기 멈춤]\n\n";
+        std::cout << "백춘식은 해냈다.\n\n";
+        std::cout << "진상들을 물리치고,\n";
+        std::cout << "상하차로 허리가 나가면서도,\n";
+        std::cout << "중고거래로 떼돈을 벌었다.\n\n";
         std::cout << "월세?  납부 완료.\n";
-        std::cout << "카드값? 납부 완료.\n";
-        std::cout << "삼각김밥? 이제 3개씩 산다.\n\n";
-        std::cout << "그리고 춘식은 깨달았다.\n";
+        std::cout << "카드값?  납부 완료.\n";
+        std::cout << "삼각김밥?  이제 3개씩 산다.\n\n";
+        std::cout << "그리고 춘식은 깨달았다.\n\n";
         std::cout << "\"세상은 결국 당근이다.\"\n\n";
-        std::cout << "  최종 보유 금액: " << player.getMoney() << "원\n";
-        std::cout << "  최종 전투력   : " << player.getCombatPower() << "\n";
-        std::cout << "══════════════════════════════════════\n";
+        std::cout << "...\n\n";
+        std::cout << "그로부터 3년 후.\n\n";
+        std::cout << "백춘식 (26세, 현 당근마켓 파워유저)은\n";
+        std::cout << "강남에 리셀 전문 쇼핑몰을 차렸다.\n\n";
+        std::cout << "직원은 총 1명.\n\n";
+        std::cout << "본인이다.\n\n";
+        std::cout << "──────────────────────────────────────\n";
+        std::cout << "  최종 수익: " << player.getMoney() << " 원\n";
+        std::cout << "  진상 처치 수: " << enemyCount << " 명\n";
+        std::cout << "  상하차 횟수: " << laborCount << " 회\n\n";
+        std::cout << "  \"춘식아, 넌 할 수 있어.\"\n";
+        std::cout << "  - 엄마 (아직도 반지하 원룸 거주 중)\n";
+        std::cout << "──────────────────────────────────────\n\n";
+        std::cout << "        [ 처음부터 다시하기 ]\n";
+        std::cout << "──────────────────────────────────────\n";
         scoreTree.insert(ScoreRecord(player.getName(), player.getMoney()));
         scoreTree.printDescending();
         running = false;
@@ -375,12 +387,12 @@ void Game::runSlotMachine() {
 
     // 펫 보유 시 꽝 확률 -5%
     bool hasPet = player.getInventory().hasItemOfType(ItemType::Pet);
-    // 확률: 잭팟 5%, 대박 20%, 소박 35%, 꽝 40% (펫 있으면 꽝 35%)
+    // 확률: 잭팟 1%, 대박 9%, 소박 80%, 꽝 10% (펫 있으면 꽝 5%)
     int roll = std::rand() % 100;
-    int jackpotThres = 5;
-    int bigThres     = 25;   // 5+20
-    int smallThres   = 60;   // 5+20+35
-    // 꽝 확률: 나머지 (40% or 35%)
+    int jackpotThres = 1;
+    int bigThres     = 10;   // 1+9
+    int smallThres   = 90;   // 1+9+80
+    // 꽝 확률: 나머지 (10% or 5%)
 
     std::cout << "\n🎰 슬롯 결과: ";
     if (roll < jackpotThres) {
@@ -396,7 +408,7 @@ void Game::runSlotMachine() {
         player.addMoney(win);
         std::cout << "🍒🍒🍒 소박! +" << win << "원!\n";
     } else {
-        int bangThres = hasPet ? 95 : 100; // 펫 있으면 꽝 확률 -5%
+        int bangThres = hasPet ? 95 : 100; // 펫 있으면 꽝 25%, 본전 5%
         if (roll < bangThres || !hasPet) {
             std::cout << "💀 꽝... -" << bet << "원\n";
             if (!player.isAlive()) {
@@ -413,6 +425,58 @@ void Game::runSlotMachine() {
         }
     }
     std::cout << "남은 돈: " << player.getMoney() << "원\n";
+}
+
+// ─────────────────────────────────────────
+//  상점 NPC 멘트
+// ─────────────────────────────────────────
+void Game::printShopGreeting() const {
+    const char* msgs[] = {
+        "어서 와. 돈 냄새가 진동하는군.",
+        "가난한 자로 들어와도 좋다. 부자로 나갈지는 모르겠지만.",
+        "네 지갑 상태가 안 좋아 보이는군.",
+        "중고거래는 실력이 아니라 타이밍이다.",
+        "시세는 거짓말하지 않는다. 사람은 한다.",
+        "오늘도 누군가는 바가지를 쓰고, 누군가는 돈을 번다.",
+        "돈은 있나? 없으면 물건 구경만 해."
+    };
+    const int count = 7;
+    std::cout << "\n🧍 상인: \"" << msgs[std::rand() % count] << "\"\n";
+}
+
+void Game::printShopPurchaseMsg(int price) const {
+    if (price >= 100000) {
+        const char* msgs[] = {
+            "오호, 큰손이 오셨군.",
+            "드디어 도박의 결실을 보는군.",
+            "이걸 산다고? 배짱 하나는 인정한다.",
+            "이 정도면 사업가가 아니라 도박사 아닌가?",
+            "부자가 되거나 파산하거나. 둘 중 하나다."
+        };
+        std::cout << "🧍 상인: \"" << msgs[std::rand() % 5] << "\"\n";
+    } else {
+        const char* msgs[] = {
+            "좋은 선택이야. 아마.",
+            "축하한다. 이제 원가 회수만 하면 된다.",
+            "이 물건의 미래는 나도 모른다.",
+            "비싸게 팔 수 있길 기도하지.",
+            "구매 완료. 이제 남을 설득할 차례다.",
+            "축하한다. 네가 다음 피해자... 아니 투자자다.",
+            "시세가 오를 수도, 내릴 수도 있다. 책임은 본인 부담."
+        };
+        std::cout << "🧍 상인: \"" << msgs[std::rand() % 7] << "\"\n";
+    }
+}
+
+void Game::printShopNoMoneyMsg() const {
+    const char* msgs[] = {
+        "지갑이 텅 비었는데 뭘 사겠다는 거냐.",
+        "꿈은 크지만 잔액은 작군.",
+        "카지노 문은 항상 열려 있다.",
+        "돈이 부족합니다. 노동은 충분합니다.",
+        "그 물건은 사고 싶고 돈은 없고. 인생이군."
+    };
+    std::cout << "🧍 상인: \"" << msgs[std::rand() % 5] << "\"\n";
 }
 
 // ─────────────────────────────────────────
@@ -454,10 +518,9 @@ void Game::printHelp() const {
     std::cout << "  battle           현재 약속 장소에서 거래 시작\n";
     std::cout << "  casino           슬롯머신 (카지노에서만)\n";
     std::cout << "  inventory        인벤토리 확인\n";
+    std::cout << "  sell <아이템명>  아이템 판매 (구매가의 50%)\n";
     std::cout << "  status           상태 확인\n";
     std::cout << "  map              지도 확인\n";
-    std::cout << "  scores           점수 랭킹\n";
-    std::cout << "  event            이벤트 처리\n";
     std::cout << "  quit             게임 종료\n";
 }
 
@@ -465,6 +528,12 @@ void Game::look() const {
     const Room* room = dungeon.getRoom(player.getCurrentRoomId());
     if (!room) { std::cout << "알 수 없는 장소.\n"; return; }
     room->printDescription();
+    if (player.getCurrentRoomId() == roomShop) {
+        printShopGreeting();
+        const Room* shopRoom = dungeon.getRoom(roomShop);
+        if (shopRoom && shopRoom->itemCount() == 0)
+            std::cout << "🧍 상인: \"재고가 없습니다. 다 팔렸어.\"\n";
+    }
     std::cout << "[이동 가능한 방향]";
     bool hasExit = false;
     for (int i = 0; i < 4; ++i) {
@@ -496,6 +565,7 @@ void Game::doMove(Direction direction) {
     }
     moveHistory.push(current);
     player.setCurrentRoomId(next);
+    triggerRandomEvent();
     look();
 }
 
@@ -521,11 +591,95 @@ void Game::doStatus() const {
 }
 
 void Game::doMap() const {
-    dungeon.printMap();
+    int cur = player.getCurrentRoomId();
+    const char* H = "  ◀ 현재 위치";
+    const char* N = "";
+
+    std::cout << "\n=== Market Quest Map ===\n";
+    std::cout << "             +-------------+\n";
+    std::cout << "             |    CASINO   |" << (cur==roomCasino ? H : N) << "\n";
+    std::cout << "             +-------------+\n";
+    std::cout << "                    |\n";
+    std::cout << "             +-------------+          +-------------+\n";
+    if (cur == roomShop)
+        std::cout << "             |     HOME    |----------|     SHOP    |" << H << "\n";
+    else if (cur == roomHome)
+        std::cout << "현재 위치 ▶  |     HOME    |----------|     SHOP    |\n";
+    else
+        std::cout << "             |     HOME    |----------|     SHOP    |\n";
+    std::cout << "             +-------------+          +-------------+\n";
+    std::cout << "                    |\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "           |     STAGE 1      |" << (cur==roomMeeting[0] ? H : N) << "\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "                    |\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "           |     STAGE 2      |" << (cur==roomMeeting[1] ? H : N) << "\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "                    |\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "           |     STAGE 3      |" << (cur==roomMeeting[2] ? H : N) << "\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "                    |\n";
+    std::cout << "           +------------------+\n";
+    std::cout << "           |   FINAL STAGE    |" << (cur==roomMeeting[3] ? H : N) << "\n";
+    std::cout << "           +------------------+\n";
 }
 
-void Game::doScores() const {
-    scoreTree.printDescending();
+void Game::triggerRandomEvent() {
+    // 이동 시 40% 확률로 이벤트 발생
+    if (std::rand() % 100 >= 40) return;
+
+    static const GameEvent pool[] = {
+        {"길에서 만원을 주웠다!",               0,  10000},
+        {"이웃집 할머니가 용돈을 주셨다.",       0,   5000},
+        {"알바비가 들어왔다.",                   0,  20000},
+        {"중고나라에서 급처 물건을 팔았다!",     0,  15000},
+        {"친구가 밥을 사줬다.",                  0,   3000},
+        {"갑자기 택배비가 나갔다...",            0,  -3000},
+        {"핸드폰 요금이 나갔다.",                0,  -5000},
+        {"충동구매를 했다...",                   0,  -8000},
+        {"카드값이 나갔다.",                     0, -10000},
+        {"라면을 끓이다 태워먹었다.",            0,  -2000},
+        {"날씨가 맑다. 기분이 좋아졌다.",        0,      0},
+        {"진상의 별점 테러가 달렸다...",         0,      0},
+    };
+    static const int POOL_SIZE = 12;
+
+    const GameEvent& ev = pool[std::rand() % POOL_SIZE];
+    eventQueue.enqueue(ev);
+
+    GameEvent out;
+    if (!eventQueue.dequeue(out)) return;
+
+    std::cout << "\n[이벤트] " << out.description << "\n";
+    if (out.moneyDelta != 0) {
+        player.addMoney(out.moneyDelta);
+        std::cout << "  돈 변화: " << out.moneyDelta
+                  << "원 (현재: " << player.getMoney() << "원)\n";
+    }
+}
+
+void Game::doSell(const std::string& itemName) {
+    Item* item = player.getInventory().findItem(itemName);
+    if (!item) {
+        std::cout << "'" << itemName << "' 아이템이 인벤토리에 없다.\n";
+        return;
+    }
+    int sellPrice  = item->getValue() / 2;
+    ItemType type  = item->getType();
+    int effectVal  = item->getEffectValue();
+
+    if (type == ItemType::Weapon)
+        player.addCombatPower(-effectVal);
+
+    player.getInventory().removeItem(itemName);
+    player.addMoney(sellPrice);
+    std::cout << itemName << " 판매 완료! +" << sellPrice
+              << "원 (현재: " << player.getMoney() << "원)\n";
+    if (type == ItemType::Weapon)
+        std::cout << "  전투력 -" << effectVal
+                  << " (현재: " << player.getCombatPower() << ")\n";
 }
 
 void Game::doSortItems() const {
@@ -583,12 +737,14 @@ void Game::processCommand(const std::string& line) {
         if (!player.spendMoney(item.getValue())) {
             std::cout << "돈이 부족하다! (필요: " << item.getValue()
                       << "원, 보유: " << player.getMoney() << "원)\n";
+            printShopNoMoneyMsg();
             shop->addItem(item); // 다시 넣기
             return;
         }
-        // 무기/음식 효과 즉시 적용
+        // 무기: 전투력 적용 + 인벤토리에도 추가
         if (item.getType() == ItemType::Weapon) {
             player.addCombatPower(item.getEffectValue());
+            player.getInventory().addItem(item);
             std::cout << item.getName() << " 구매 완료! 전투력 +"
                       << item.getEffectValue() << " (현재: "
                       << player.getCombatPower() << ")\n";
@@ -596,6 +752,7 @@ void Game::processCommand(const std::string& line) {
             player.getInventory().addItem(item);
             std::cout << item.getName() << " 구매 완료!\n";
         }
+        printShopPurchaseMsg(item.getValue());
         if (!player.isAlive()) {
             std::cout << "💸 돈이 0원! 감옥으로...\n";
             running = false;
@@ -634,26 +791,14 @@ void Game::processCommand(const std::string& line) {
         doStatus();
     } else if (cmd == "map") {
         doMap();
-    } else if (cmd == "scores") {
-        doScores();
     } else if (cmd == "sortitems") {
         doSortItems();
-    } else if (cmd == "event") {
-        GameEvent ev;
-        if (!eventQueue.dequeue(ev)) {
-            std::cout << "처리할 이벤트가 없다.\n";
-            return;
-        }
-        std::cout << "📢 이벤트: " << ev.description << "\n";
-        if (ev.moneyDelta != 0) {
-            player.addMoney(ev.moneyDelta);
-            std::cout << "  돈 변화: " << ev.moneyDelta << "원 (현재: "
-                      << player.getMoney() << "원)\n";
-        }
-        if (!player.isAlive()) {
-            std::cout << "💸 돈이 0원! 감옥으로...\n";
-            running = false;
-        }
+    } else if (cmd == "sell") {
+        std::string itemName;
+        std::getline(ss, itemName);
+        while (!itemName.empty() && itemName[0] == ' ') itemName.erase(0, 1);
+        if (itemName.empty()) { std::cout << "사용법: sell <아이템명>\n"; return; }
+        doSell(itemName);
     } else if (cmd == "quit") {
         running = false;
     } else if (cmd.empty()) {
@@ -669,21 +814,45 @@ void Game::processCommand(const std::string& line) {
 void Game::run() {
     // 오프닝 나레이션
     std::cout << "\n";
-    std::cout << "══════════════════════════════════════\n";
-    std::cout << "        당근로운 평화마켓              \n";
-    std::cout << "══════════════════════════════════════\n";
-    std::cout << "\n때는 2025년. 대한민국 어딘가의 반지하 원룸.\n";
-    std::cout << "23살 백수 백춘식은 오늘도 유튜브 쇼츠를 보며 하루를 시작했다.\n\n";
-    std::cout << "\"월세가 밀렸다.\"\n";
-    std::cout << "\"카드값이 밀렸다.\"\n";
-    std::cout << "\"심지어 편의점 삼각김밥도 이제 2,000원이다.\"\n\n";
-    std::cout << "그때, 핸드폰에 알림 하나가 떴다.\n";
-    std::cout << "📱 [당근마켓] \"갤럭시 S23 10만원에 팝니다 진짜 급해요 ㅠㅠ\"\n\n";
-    std::cout << "춘식의 눈이 번뜩였다. \"...리셀이다.\"\n\n";
+    std::cout << "──────────────────────────────────────\n";
+    std::cout << "       당근로운 평화마켓\n";
+    std::cout << "──────────────────────────────────────\n\n";
+    std::cout << "[화면 서서히 밝아지며...]\n\n";
+    std::cout << "때는 2025년.\n\n";
+    std::cout << "대한민국 어딘가의 반지하 원룸.\n\n";
+    std::cout << "23살 백수 백춘식은 오늘도\n";
+    std::cout << "유튜브 쇼츠를 보며 하루를 시작했다.\n\n";
+    std::cout << "\"월세가 밀렸다.\"\n\n";
+    std::cout << "\"카드값이 밀렸다.\"\n\n";
+    std::cout << "\"심지어 편의점 삼각김밥도\n";
+    std::cout << "이제 2,000원이다.\"\n\n";
+    std::cout << "...세상이 너무하다.\n\n";
+    std::cout << "그때, 춘식의 핸드폰에 알림 하나가 떴다.\n\n";
+    std::cout << "📱 [당근마켓 - 내 근처 급처 매물]\n";
+    std::cout << "   \"갤럭시 S23 10만원에 팝니다\n";
+    std::cout << "    진짜 급해요 ㅠㅠ\"\n\n";
+    std::cout << "춘식의 눈이 번뜩였다.\n\n";
+    std::cout << "\"...리셀이다.\"\n\n";
+    std::cout << "주머니엔 달랑 현금 5만원.\n";
+    std::cout << "체력은 바닥.\n";
+    std::cout << "사회성은 더 바닥.\n\n";
+    std::cout << "하지만 춘식에겐\n";
+    std::cout << "아무도 모르는 재능이 하나 있었으니...\n\n";
+    std::cout << "그것은 바로,\n\n";
+    std::cout << "진상을 만나도 굴하지 않는\n";
+    std::cout << "┌──────────────────┐\n";
+    std::cout << "│    강철 멘탈      │\n";
+    std::cout << "└──────────────────┘\n\n";
     std::cout << "과연 춘식은 이 험난한 당근마켓에서\n";
     std::cout << "살아남아 월세를 낼 수 있을까?\n\n";
-    std::cout << "[ 시작 금액: 50,000원 | 전투력: 10 ]\n";
-    std::cout << "══════════════════════════════════════\n";
+    std::cout << "아니면 결국 감옥(?)에 끌려가게 될까?\n\n";
+    std::cout << "...그건 당신의 선택에 달려있다.\n\n";
+    std::cout << "[ PRESS ENTER TO START ]\n";
+    std::cout << "──────────────────────────────────────\n";
+    {
+        std::string dummy;
+        std::getline(std::cin, dummy);
+    }
     std::cout << "'help'를 입력하면 명령어 목록을 볼 수 있습니다.\n\n";
 
     look();
@@ -694,6 +863,12 @@ void Game::run() {
         std::string line;
         if (!std::getline(std::cin, line)) break;
         processCommand(line);
+    }
+
+    if (stageCleared[3]) {
+        // 엔딩 크레딧은 onStageClear(3)에서 이미 출력됨
+        std::cout << "Goodbye.\n";
+        return;
     }
 
     if (!player.isAlive()) {
